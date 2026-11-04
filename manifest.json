@@ -1,0 +1,10 @@
+{
+  "domain": "solar_surplus_switch",
+  "name": "Solar Surplus Switch",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "",
+  "iot_class": "calculated",
+  "version": "2.0.0"
+}

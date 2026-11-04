@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solar Surplus Switch",
+        "description": "Configurez le contrôleur de surplus solaire.",
+        "data": {
+          "export_sensor": "Capteur de puissance exportée (W)",
+          "power_threshold": "Seuil de déclenchement (Watts)",
+          "delay_on": "Temps avant enclenchement (secondes)",
+          "delay_off": "Temps avant déclenchement (secondes)",
+          "priority_sensor": "Binary sensor prioritaire (optionnel)"
+        }
+      }
+    }
+  }
+}
