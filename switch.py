@@ -95,10 +95,8 @@ class SolarSurplusController:
         _LOGGER.debug("Évaluation du surplus -> export: %.1fW, threshold: %.1fW, auto: %s, is_on: %s",
                       self.current_export, self.power_threshold, self.automation_enabled, self.is_on)
 
-        # Si on est en mode manuel, aucune automatisation ni timer ne doit tourner
         if not self.automation_enabled:
             if self._timer:
-                _LOGGER.debug("Mode manuel actif : annulation de tout timer résiduel.")
                 self._timer()
                 self._timer = None
             if self.status_message != "Mode Manuel":
@@ -116,23 +114,47 @@ class SolarSurplusController:
         required_threshold = 0.0 if self.is_on else self.power_threshold
         surplus_ok = self.current_export >= required_threshold
 
+# 1. Surplus suffisant et appareil éteint -> Lancer le timer d'enclenchement
         if surplus_ok and not self.is_on:
             if not self._timer:
+                _LOGGER.debug("Démarrage du délai d'enclenchement de %ss...", self.delay_on)
                 self.status_message = "En attente d'enclenchement..."
                 self.notify()
-                self._timer = async_call_later(self.hass, self.delay_on, lambda _: self._execute_state(True))
+                
+                @callback
+                def _on_timer(_):
+                    self.hass.async_create_task(self._execute_state(True))
+                
+                self._timer = async_call_later(self.hass, self.delay_on, _on_timer)
+
+        # 2. Surplus insuffisant et appareil allumé -> Lancer le timer de coupure
         elif not surplus_ok and self.is_on:
             if not self._timer:
+                _LOGGER.debug("Démarrage du délai de coupure de %ss...", self.delay_off)
                 self.status_message = "En attente de coupure..."
                 self.notify()
-                self._timer = async_call_later(self.hass, self.delay_off, lambda _: self._execute_state(False))
+                
+                @callback
+                def _off_timer(_):
+                    self.hass.async_create_task(self._execute_state(False))
+                
+                self._timer = async_call_later(self.hass, self.delay_off, _off_timer)
+        # 3. Situation stable
         else:
-            if self._timer:
+            # On ne nettoie le timer QUE si la condition n'exige plus aucun changement
+            if self._timer and ((surplus_ok and self.is_on) or (not surplus_ok and not self.is_on)):
+                _LOGGER.debug("Situation stable, annulation du timer en cours.")
                 self._timer()
                 self._timer = None
-            self.status_message = "Switch actif (Auto)" if self.is_on else "En attente de surplus"
-            self.notify()
-
+            
+            if not self._timer:
+                self.status_message = "Switch actif (Auto)" if self.is_on else "En attente de surplus"
+                self.notify()
+    async def _execute_state(self, state: bool):
+        """Exécute le changement d'état après expiration du minuteur."""
+        self._timer = None
+        await self.set_state(state)
+        await self.evaluate()
 
 class SolarSurplusControllerSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, c, entry):
@@ -210,15 +232,12 @@ class SolarSurplusAutomationModeSwitch(SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         if (st := await self.async_get_last_state()):
             self.c.automation_enabled = (st.state == "on")
-        # Si le mode auto est activé au démarrage, on lance une évaluation propre
-        if self.c.automation_enabled:
-            await self.c.evaluate()
+        # Suppression de l'appel direct à evaluate() ici pour éviter le RuntimeError
 
     async def async_turn_on(self, **kwargs):
         _LOGGER.debug("Activation du mode Automatique par l'utilisateur")
         self.c.automation_enabled = True
-        self.c.status_message = "En attente de surplus"
-        self.c.notify()  # Met à jour immédiatement l'UI pour éviter le rebond du switch
+        self.c.notify()
         await self.c.evaluate()
 
     async def async_turn_off(self, **kwargs):
@@ -228,4 +247,4 @@ class SolarSurplusAutomationModeSwitch(SwitchEntity, RestoreEntity):
             self.c._timer()
             self.c._timer = None
         self.c.status_message = "Mode Manuel"
-        self.c.notify()  # Met à jour immédiatement l'UI
+        self.c.notify()
